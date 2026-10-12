@@ -47,18 +47,34 @@ function getAudio(){
   return audio;
  }catch{return null;}
 }
+// Wake the audio engine on the first user gesture and keep one shared context.
+let waking=null;
+function wakeAudio(){
+ const ctx=getAudio();if(!ctx)return Promise.resolve(null);
+ if(ctx.state==='running')return Promise.resolve(ctx);
+ if(!waking){
+  try{
+   // Start a silent buffer within the gesture to unlock mobile browsers.
+   const silent=ctx.createBuffer(1,1,ctx.sampleRate);
+   const starter=ctx.createBufferSource();starter.buffer=silent;
+   starter.connect(ctx.destination);starter.start(0);
+  }catch{}
+  waking=ctx.resume().then(()=>ctx).catch(()=>null).finally(()=>{waking=null;});
+ }
+ return waking;
+}
+function playReady(ctx){
+ if(!soundOn||!ctx||ctx.state!=='running'||!sparkleBuffer)return;
+ try{const source=ctx.createBufferSource();source.buffer=sparkleBuffer;
+ source.connect(ctx.destination);source.start(ctx.currentTime);}catch{}
+}
 function chime(){
  if(!soundOn)return;
- const ctx=getAudio();if(!ctx||!sparkleBuffer)return;
- try{
-  // Both resume and start happen within the same trusted pointer gesture.
-  if(ctx.state==='suspended')ctx.resume().catch(()=>{});
-  const source=ctx.createBufferSource();source.buffer=sparkleBuffer;
-  source.connect(ctx.destination);source.start(0);
- }catch{}
+ const ctx=getAudio();if(!ctx)return;
+ if(ctx.state==='running'){playReady(ctx);return;}
+ // On the first pop, play immediately once the browser permits audio.
+ wakeAudio().then(ready=>playReady(ready));
 }
-function wakeAudio(){const ctx=getAudio();if(ctx?.state==='suspended')ctx.resume().catch(()=>{});}
-// Prepare on first interaction; bubble sound itself is started on pointerdown.
 document.addEventListener('pointerdown',wakeAudio,{capture:true,passive:true});
 document.addEventListener('keydown',wakeAudio,{capture:true});
 function bubbleSize(){// Fixed bubble size, independent of email count.
