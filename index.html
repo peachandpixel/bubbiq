@@ -24,50 +24,20 @@ let soundOn=saved?.soundOn!==false,theme=themes[saved?.theme]?saved.theme:'origi
 let audio=null,serial=0;const live=new Map();
 function save(){try{localStorage.setItem(key,JSON.stringify({count,done,soundOn,theme}))}catch{}}
 function applyTheme(){const t=themes[theme],r=document.documentElement.style;Object.entries({'--page':t.page,'--ink':t.ink,'--muted':t.muted,'--edge':t.edge,'--button':t.button,'--scene-a':t.a,'--scene-b':t.b,'--scene-c':t.c,'--bubble-a':t.ba,'--bubble-b':t.bb,'--bubble-c':t.bc,'--accent':t.accent,'--accent2':t.accent2}).forEach(([k,v])=>r.setProperty(k,v));$('theme').value=theme;document.querySelector('meta[name="theme-color"]').content=t.page;}
-// Keep one audio context warm. Schedule notes synchronously during the user gesture.
-function getAudio(){
- if(!soundOn)return null;
- try{
-  const AC=window.AudioContext||window.webkitAudioContext;
-  if(!AC)return null;
-  if(!audio||audio.state==='closed')audio=new AC({latencyHint:'interactive'});
-  if(audio.state==='suspended')audio.resume().catch(()=>{});
-  return audio;
- }catch{return null}
-}
-function unlockAudio(){
- const ctx=getAudio();if(!ctx)return;
- // A silent one-sample source helps activate audio on browsers that require a gesture.
- try{if(ctx.state!=='running'){
-  const buffer=ctx.createBuffer(1,1,ctx.sampleRate);
-  const source=ctx.createBufferSource();source.buffer=buffer;
-  source.connect(ctx.destination);source.start(0);
- }}catch{}
-}
-document.addEventListener('pointerdown',unlockAudio,{capture:true,passive:true});
-document.addEventListener('keydown',unlockAudio,{capture:true});
-function chime(){
- if(!soundOn)return;
- const ctx=getAudio();if(!ctx)return;
- try{
-  // Do not await resume(): that can defer the first chime until after the pop.
-  const t=ctx.currentTime+.008;
-  [1046.5,1318.5,1568,2093].forEach((f,i)=>{
-   const o=ctx.createOscillator(),g=ctx.createGain(),start=t+i*.052;
-   o.type='sine';o.frequency.value=f;
-   g.gain.setValueAtTime(.0001,start);
-   g.gain.exponentialRampToValueAtTime(.085,start+.012);
-   g.gain.exponentialRampToValueAtTime(.0001,start+.29);
-   o.connect(g);g.connect(ctx.destination);o.start(start);o.stop(start+.31);
-  });
- }catch{}
-}
-function bubbleSize(){// Fixed bubble size, independent of email count.
-return Math.min(56,Math.max(36,(sky.clientWidth||700)*.095));}
-function sizeBubble(b){const variation=Number(b.dataset.variation||1);const px=Math.round(bubbleSize()*variation);b.style.width=px+'px';b.style.height=px+'px';}
+function getAudio(){if(!soundOn)return null;try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return null;if(!audio)audio=new AC();if(audio.state==='suspended')audio.resume().catch(()=>{});return audio}catch{return null}}
+// Unlock audio at the earliest trusted gesture, before the click handler.
+document.addEventListener('pointerdown',()=>{getAudio()},{passive:true});
+document.addEventListener('keydown',()=>{getAudio()});
+async function chime(){if(!soundOn)return;const ctx=getAudio();if(!ctx)return;try{if(ctx.state!=='running')await ctx.resume();if(!soundOn)return;const t=ctx.currentTime+.005;[1046.5,1318.5,1568,2093].forEach((f,i)=>{const o=ctx.createOscillator(),g=ctx.createGain(),start=t+i*.052;o.type='sine';o.frequency.value=f;g.gain.setValueAtTime(.0001,start);g.gain.exponentialRampToValueAtTime(.085,start+.012);g.gain.exponentialRampToValueAtTime(.0001,start+.29);o.connect(g);g.connect(ctx.destination);o.start(start);o.stop(start+.31)})}catch{}}
+function bubbleSize(){// Based on the SET total, never the remaining number.
+const width=sky.clientWidth||700,height=sky.clientHeight||500;
+const density=Math.sqrt(Math.max(1,count));
+const desired=Math.max(25,Math.min(145,225/density));
+return Math.min(desired,Math.max(24,Math.min(width,height)*.36));}
+function sizeBubble(b){const variation=Number(b.dataset.variation||1);const px=Math.max(22,Math.round(bubbleSize()*variation));b.style.width=px+'px';b.style.height=px+'px';}
 function add(){const id=serial++,b=document.createElement('button');b.type='button';b.className='bubble';b.setAttribute('aria-label','Mark an email complete');b.dataset.variation=(.82+Math.random()*.36).toFixed(3);b.style.left=(14+Math.random()*72)+'%';b.style.top=(15+Math.random()*70)+'%';sizeBubble(b);b.style.setProperty('--dx',(4+Math.random()*9)+'px');b.style.setProperty('--dy',(4+Math.random()*11)+'px');b.style.setProperty('--duration',(3+Math.random()*4)+'s');b.style.setProperty('--delay',(-Math.random()*6)+'s');b.addEventListener('click',()=>{if(b.classList.contains('popping'))return;chime();b.classList.add('popping');setTimeout(()=>{if(!live.has(id))return;live.delete(id);b.remove();done++;stats()},280)});live.set(id,b);sky.append(b)}
 function stats(){$('remaining').textContent=count-done;$('total').textContent=count;$('done').textContent=done;$('range').value=count;const pct=count?Math.round(done/count*100):100;$('percent').textContent=pct+'%';$('fill').style.width=pct+'%';sky.querySelector('.finished')?.remove();if(live.size===0){const div=document.createElement('div');div.className='finished';div.innerHTML=count===0?'☁️<div>Clear skies!</div>':'🎉✨<div>Inbox conquered!</div>';sky.append(div)}$('message').textContent=count>0&&done===count?'You did it! Enjoy your inbox freedom 💜':done>0?'Look at you go! Keep popping ✨':'One little pop at a time 🌷';save()}
-function setCount(n){count=Math.max(0,Math.min(100,Math.round(n)));done=Math.min(done,count);const needed=count-done;while(live.size<needed)add();while(live.size>needed){const id=Array.from(live.keys()).pop();live.get(id).remove();live.delete(id)}// Keep all bubbles at their original fixed size.
+function setCount(n){count=Math.max(0,Math.min(100,Math.round(n)));done=Math.min(done,count);const needed=count-done;while(live.size<needed)add();while(live.size>needed){const id=Array.from(live.keys()).pop();live.get(id).remove();live.delete(id)}// Resize only when the user CHANGES the set email total.
 live.forEach(sizeBubble);stats()}
 $('plus').onclick=()=>setCount(count+1);$('minus').onclick=()=>setCount(count-1);$('range').oninput=e=>setCount(Number(e.target.value));
 $('reset').onclick=()=>{live.forEach(b=>b.remove());live.clear();done=0;for(let i=0;i<count;i++)add();stats()};
