@@ -24,11 +24,44 @@ let soundOn=saved?.soundOn!==false,theme=themes[saved?.theme]?saved.theme:'origi
 let audio=null,serial=0;const live=new Map();
 function save(){try{localStorage.setItem(key,JSON.stringify({count,done,soundOn,theme}))}catch{}}
 function applyTheme(){const t=themes[theme],r=document.documentElement.style;Object.entries({'--page':t.page,'--ink':t.ink,'--muted':t.muted,'--edge':t.edge,'--button':t.button,'--scene-a':t.a,'--scene-b':t.b,'--scene-c':t.c,'--bubble-a':t.ba,'--bubble-b':t.bb,'--bubble-c':t.bc,'--accent':t.accent,'--accent2':t.accent2}).forEach(([k,v])=>r.setProperty(k,v));$('theme').value=theme;document.querySelector('meta[name="theme-color"]').content=t.page;}
-function getAudio(){if(!soundOn)return null;try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return null;if(!audio)audio=new AC();if(audio.state==='suspended')audio.resume().catch(()=>{});return audio}catch{return null}}
-// Unlock audio at the earliest trusted gesture, before the click handler.
-document.addEventListener('pointerdown',()=>{getAudio()},{passive:true});
-document.addEventListener('keydown',()=>{getAudio()});
-async function chime(){if(!soundOn)return;const ctx=getAudio();if(!ctx)return;try{if(ctx.state!=='running')await ctx.resume();if(!soundOn)return;const t=ctx.currentTime+.005;[1046.5,1318.5,1568,2093].forEach((f,i)=>{const o=ctx.createOscillator(),g=ctx.createGain(),start=t+i*.052;o.type='sine';o.frequency.value=f;g.gain.setValueAtTime(.0001,start);g.gain.exponentialRampToValueAtTime(.085,start+.012);g.gain.exponentialRampToValueAtTime(.0001,start+.29);o.connect(g);g.connect(ctx.destination);o.start(start);o.stop(start+.31)})}catch{}}
+// Keep one audio context warm. Schedule notes synchronously during the user gesture.
+function getAudio(){
+ if(!soundOn)return null;
+ try{
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC)return null;
+  if(!audio||audio.state==='closed')audio=new AC({latencyHint:'interactive'});
+  if(audio.state==='suspended')audio.resume().catch(()=>{});
+  return audio;
+ }catch{return null}
+}
+function unlockAudio(){
+ const ctx=getAudio();if(!ctx)return;
+ // A silent one-sample source helps activate audio on browsers that require a gesture.
+ try{if(ctx.state!=='running'){
+  const buffer=ctx.createBuffer(1,1,ctx.sampleRate);
+  const source=ctx.createBufferSource();source.buffer=buffer;
+  source.connect(ctx.destination);source.start(0);
+ }}catch{}
+}
+document.addEventListener('pointerdown',unlockAudio,{capture:true,passive:true});
+document.addEventListener('keydown',unlockAudio,{capture:true});
+function chime(){
+ if(!soundOn)return;
+ const ctx=getAudio();if(!ctx)return;
+ try{
+  // Do not await resume(): that can defer the first chime until after the pop.
+  const t=ctx.currentTime+.008;
+  [1046.5,1318.5,1568,2093].forEach((f,i)=>{
+   const o=ctx.createOscillator(),g=ctx.createGain(),start=t+i*.052;
+   o.type='sine';o.frequency.value=f;
+   g.gain.setValueAtTime(.0001,start);
+   g.gain.exponentialRampToValueAtTime(.085,start+.012);
+   g.gain.exponentialRampToValueAtTime(.0001,start+.29);
+   o.connect(g);g.connect(ctx.destination);o.start(start);o.stop(start+.31);
+  });
+ }catch{}
+}
 function bubbleSize(){// Fixed bubble size, independent of email count.
 return Math.min(56,Math.max(36,(sky.clientWidth||700)*.095));}
 function sizeBubble(b){const variation=Number(b.dataset.variation||1);const px=Math.round(bubbleSize()*variation);b.style.width=px+'px';b.style.height=px+'px';}
